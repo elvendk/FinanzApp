@@ -93,11 +93,14 @@
     <!-- ── INGRESOS ── -->
     <div id="page-incomes" class="page">
       <div class="page-header">
-        <div><h1 class="page-title"><span>Ingresos</span></h1><div style="font-size:13px;color:var(--text-3);margin-top:4px">Dinero recibido este período</div></div>
+        <div><h1 class="page-title"><span>Ingresos</span></h1><div style="font-size:13px;color:var(--text-3);margin-top:4px">Dinero recibido por período</div></div>
         <div class="page-actions"><button class="btn btn-primary" onclick="openAddIncome()">+ Nuevo Ingreso</button></div>
       </div>
       <div style="padding:20px 32px 0">
-        <div class="stats-grid" style="grid-template-columns:repeat(2,1fr)">
+        <div class="filter-bar" style="margin-bottom:0">
+          <select class="form-select" id="income-filter-period" onchange="incomeFilterPeriod=this.value;renderIncomes()"></select>
+        </div>
+        <div class="stats-grid" style="grid-template-columns:repeat(2,1fr);margin-top:12px">
           <div class="stat-card green"><div class="stat-label">Total ingresos del período</div><div class="stat-value green" id="income-total">$0</div></div>
         </div>
       </div>
@@ -191,6 +194,7 @@
           <div style="font-size:13px;color:var(--text-3);margin-top:4px">Gastos mes a mes durante el año</div>
         </div>
         <div class="page-actions" style="align-items:center;gap:6px">
+          <select class="form-select" id="annual-person-filter" onchange="annualPersonFilter=this.value;renderAnnual()" style="min-width:160px"><option value="">Todos (total)</option></select>
           <button class="btn btn-ghost btn-sm" onclick="annualChangeYear(-1)">← Año anterior</button>
           <div id="annual-year-label" style="font-size:18px;font-weight:800;min-width:60px;text-align:center;background:var(--bg-600);border:1px solid var(--border);border-radius:8px;padding:6px 16px"></div>
           <button class="btn btn-ghost btn-sm" onclick="annualChangeYear(1)">Año siguiente →</button>
@@ -361,12 +365,15 @@
 
 <!-- ══ MODAL — CARD GROUP ══ -->
 <div class="modal-overlay" id="card-group-modal">
-  <div class="modal" style="max-width:440px">
-    <div class="modal-header"><div class="modal-title">Fusionar tarjetas</div><button class="modal-close" onclick="closeModal('card-group-modal')">✕</button></div>
-    <div style="font-size:13px;color:var(--text-3);margin-bottom:16px">Agrupa varias tarjetas para que aparezcan como un solo subtotal en el resumen por persona.</div>
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header"><div class="modal-title">Fusionar tarjetas (vista)</div><button class="modal-close" onclick="closeModal('card-group-modal')">✕</button></div>
+    <div style="font-size:13px;color:var(--text-3);margin-bottom:16px">Agrupa tarjetas visualmente en el resumen por tarjeta. Puedes restringirlo a personas específicas.</div>
     <div class="form-group"><label class="form-label">Nombre del grupo</label><input class="form-input" id="group-name" type="text" placeholder="Ej: Tarjetas banco, Todas Visa…"/></div>
     <div class="form-group"><label class="form-label">Selecciona tarjetas a fusionar</label>
-      <div id="group-cards-cb" style="background:var(--bg-700);border:1px solid var(--border);border-radius:8px;padding:10px 14px;max-height:200px;overflow-y:auto"></div>
+      <div id="group-cards-cb" style="background:var(--bg-700);border:1px solid var(--border);border-radius:8px;padding:10px 14px;max-height:160px;overflow-y:auto"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Aplicar solo a estas personas <span style="font-weight:400;color:var(--text-3)">(vacío = todos)</span></label>
+      <div id="group-people-cb" style="background:var(--bg-700);border:1px solid var(--border);border-radius:8px;padding:10px 14px;max-height:140px;overflow-y:auto"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('card-group-modal')">Cancelar</button>
@@ -378,7 +385,7 @@
 <!-- ══ MODAL — TAG ══ -->
 <div class="modal-overlay" id="tag-modal">
   <div class="modal" style="max-width:440px">
-    <div class="modal-header"><div class="modal-title">Nueva Etiqueta</div><button class="modal-close" onclick="closeModal('tag-modal')">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="tag-modal-title">Nueva Etiqueta</div><button class="modal-close" onclick="closeModal('tag-modal')">✕</button></div>
     <div class="form-group"><label class="form-label">Nombre</label><input class="form-input" id="tag-name-input" type="text" placeholder="Ej: Supermercado, Restaurantes, Transporte…"/></div>
     <div class="form-group"><label class="form-label">Ícono</label>
       <div id="tag-emoji-picker" style="display:flex;flex-wrap:wrap;gap:4px;background:var(--bg-700);border:1px solid var(--border);border-radius:8px;padding:10px"></div>
@@ -388,7 +395,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('tag-modal')">Cancelar</button>
-      <button class="btn btn-primary" onclick="saveTag()">Crear etiqueta</button>
+      <button class="btn btn-primary" id="tag-save-btn" onclick="saveTag()">Crear etiqueta</button>
     </div>
   </div>
 </div>
@@ -493,10 +500,12 @@ let state = {
 };
 
 let editingTx = null, editingPerson = null, editingCard = null;
-let editingIncome = null;
+let editingIncome = null, editingTag = null;
 let summaryMode = 'detail'; // 'card' | 'detail'
 let txFilter = { search:'', card:'', period:'', category:'' };
 let annualYear = new Date().getFullYear();
+let annualPersonFilter = '';
+let incomeFilterPeriod = '';
 
 // ── Persistence ────────────────────────────────────────────
 function save() { localStorage.setItem('finanzas_v2', JSON.stringify(state)); }
@@ -547,11 +556,16 @@ function getPeriods() {
 }
 function populatePeriodSelects() {
   const periods = getPeriods();
-  ['period-select','filter-period'].forEach(id=>{
+  ['period-select','filter-period','income-filter-period'].forEach(id=>{
     const el=document.getElementById(id); if(!el) return;
     const cur=el.value||state.currentPeriod;
     el.innerHTML=periods.map(p=>`<option value="${p}" ${p===cur?'selected':''}>${formatPeriod(p)}</option>`).join('');
   });
+  // Populate annual person filter
+  const apf=document.getElementById('annual-person-filter'); if(apf){
+    const cur=apf.value||'';
+    apf.innerHTML=`<option value="">Todos (total)</option>`+state.people.map(p=>`<option value="${p.id}" ${p.id===cur?'selected':''}>${p.name}</option>`).join('');
+  }
 }
 
 // ── Installment amount for a given period ──────────────────
@@ -613,6 +627,22 @@ function calcCardUsage(cardId, period) {
   return state.transactions
     .filter(t=>t.cardId===cardId && (t.category==='tarjeta'||!t.category))
     .reduce((a,t)=>a+getTxAmountForPeriod(t,period),0);
+}
+
+// Total acumulado de cuotas restantes desde el mes actual (para mostrar deuda total de tarjeta)
+function calcCardUsageTotal(cardId) {
+  return state.transactions
+    .filter(t=>t.cardId===cardId && (t.category==='tarjeta'||!t.category))
+    .reduce((a,t)=>{
+      if(t.type==='installment'){
+        const [tY,tM]=t.period.split('-').map(Number);
+        const [cY,cM]=state.currentPeriod.split('-').map(Number);
+        const elapsed=(cY-tY)*12+(cM-tM);
+        const remaining=Math.max(0,t.installments-elapsed);
+        return a+(t.amount/t.installments)*remaining;
+      }
+      return a+getTxAmountForPeriod(t,state.currentPeriod);
+    },0);
 }
 
 // ── Toasts ─────────────────────────────────────────────────
@@ -678,11 +708,11 @@ function renderDashboard() {
   document.getElementById('dash-tx-count').textContent=
     state.transactions.filter(t=>getTxAmountForPeriod(t,period)>0).length;
 
-  // Cards usage
+  // Cards usage — muestra total acumulado (mes actual + cuotas futuras)
   const cardsEl=document.getElementById('dash-cards-usage');
   if (state.creditCards.length) {
     cardsEl.innerHTML=state.creditCards.map((c,i)=>{
-      const usage=calcCardUsage(c.id,period);
+      const usage=calcCardUsageTotal(c.id);
       const limit=c.limit||0;
       const pct=limit>0?Math.min(100,(usage/limit*100)):0;
       const col=limit>0&&pct>90?'var(--red)':limit>0&&pct>70?'var(--amber)':'var(--green)';
@@ -750,14 +780,17 @@ function renderDashboard() {
 //  INCOMES
 // ══════════════════════════════════════════════════════════
 function renderIncomes() {
-  const period=state.currentPeriod;
+  const period=incomeFilterPeriod||state.currentPeriod;
+  // sync the filter select
+  const fsel=document.getElementById('income-filter-period');
+  if(fsel&&fsel.value!==period)fsel.value=period;
   const list=state.incomes.filter(i=>i.period===period).sort((a,b)=>b.amount-a.amount);
   const total=list.reduce((a,i)=>a+i.amount,0);
   document.getElementById('income-total').textContent=fmtCLP(total);
   const tb=document.getElementById('income-tbody');
   if (!list.length){tb.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">💰</div><p>Sin ingresos para este período</p></div></td></tr>`;return;}
   tb.innerHTML=list.map(i=>`<tr>
-    <td><div style="font-weight:600">${i.description}</div></td>
+    <td><div style="font-weight:600">${i.description}</div><div style="font-size:12px;color:var(--text-3)">${formatPeriod(i.period)}</div></td>
     <td><span class="badge badge-gray">${i.category||'General'}</span></td>
     <td style="font-weight:700;color:var(--green)">${fmtCLP(i.amount)}</td>
     <td><div style="display:flex;gap:6px">
@@ -974,10 +1007,9 @@ function renderPeople() {
 //  CARDS
 // ══════════════════════════════════════════════════════════
 function renderCards() {
-  const period=state.currentPeriod;
   const grid=document.getElementById('cards-grid');
   grid.innerHTML=state.creditCards.map((c,i)=>{
-    const usage=calcCardUsage(c.id,period);
+    const usage=calcCardUsageTotal(c.id); // total acumulado
     const limit=c.limit||0;
     const pct=limit>0?Math.min(100,(usage/limit*100)):0;
     const col=limit>0&&pct>90?'#ef4444':limit>0&&pct>70?'#f59e0b':'#10b981';
@@ -988,7 +1020,7 @@ function renderCards() {
         <div style="height:4px;background:rgba(255,255,255,0.15);border-radius:99px;margin-top:8px;overflow:hidden">
           <div style="height:100%;width:${pct}%;background:${col};border-radius:99px"></div>
         </div>
-        <div style="font-size:11px;opacity:0.6;margin-top:4px">${fmtCLP(usage)} usado (${pct.toFixed(0)}%)</div>`:''}
+        <div style="font-size:11px;opacity:0.6;margin-top:4px">${fmtCLP(usage)} deuda total (${pct.toFixed(0)}%)</div>`:''}
       </div>
       <div class="cc-bottom">
         <div style="display:flex;gap:8px">
@@ -1008,27 +1040,31 @@ function renderSummary() {
   const period=state.currentPeriod;
   const {myTotal,perPerson}=calcPeriod(period);
 
-  // My section
-  const myLines=state.transactions.filter(tx=>{
-    if(!getTxAmountForPeriod(tx,period))return false;
-    const s=(tx.splits||[]).find(s=>s.personId==='me');
-    return s&&s.pct>0;
-  }).map(tx=>({tx, portion:getTxAmountForPeriod(tx,period)*((tx.splits.find(s=>s.personId==='me').pct)/100)}));
-
   document.getElementById('my-summary-total').textContent=fmtCLP(myTotal);
-  document.getElementById('my-summary-items').innerHTML=myLines.length?myLines.map(l=>{
-    const card=getCard(l.tx.cardId);
-    return`<div class="person-summary-item">
-      <div><div class="item-desc">${l.tx.description}</div>
-        <div class="item-quota">${getInstallmentLabel(l.tx,period)}${card?' · '+card.name:''}</div>
-      </div>
-      <div class="item-amount">${fmtCLP(l.portion)}</div>
-    </div>`;
-  }).join(''):`<div style="padding:14px 20px;font-size:13px;color:var(--text-3)">Sin gastos propios este período</div>`;
 
   // Mode toggle buttons
   document.getElementById('sum-btn-detail').className='btn '+(summaryMode==='detail'?'btn-primary':'btn-ghost')+' btn-sm';
   document.getElementById('sum-btn-card').className='btn '+(summaryMode==='card'?'btn-primary':'btn-ghost')+' btn-sm';
+
+  // "Mi parte" section: adapts to active mode
+  if(summaryMode==='card') {
+    document.getElementById('my-summary-items').innerHTML=renderMySummaryByCard(period);
+  } else {
+    const myLines=state.transactions.filter(tx=>{
+      if(!getTxAmountForPeriod(tx,period))return false;
+      const s=(tx.splits||[]).find(s=>s.personId==='me');
+      return s&&s.pct>0;
+    }).map(tx=>({tx, portion:getTxAmountForPeriod(tx,period)*((tx.splits.find(s=>s.personId==='me').pct)/100)}));
+    document.getElementById('my-summary-items').innerHTML=myLines.length?myLines.map(l=>{
+      const card=getCard(l.tx.cardId);
+      return`<div class="person-summary-item">
+        <div><div class="item-desc">${l.tx.description}</div>
+          <div class="item-quota">${getInstallmentLabel(l.tx,period)}${card?' · '+card.name:''}</div>
+        </div>
+        <div class="item-amount">${fmtCLP(l.portion)}</div>
+      </div>`;
+    }).join(''):`<div style="padding:14px 20px;font-size:13px;color:var(--text-3)">Sin gastos propios este período</div>`;
+  }
 
   const grid=document.getElementById('summary-people-grid');
   const activePeople=state.people.filter(p=>(perPerson[p.id]||0)>0).sort((a,b)=>(perPerson[b.id]||0)-(perPerson[a.id]||0));
@@ -1036,6 +1072,39 @@ function renderSummary() {
 
   if(summaryMode==='detail') renderSummaryDetail(activePeople,perPerson,period,grid);
   else renderSummaryByCard(activePeople,perPerson,period,grid);
+}
+
+function renderMySummaryByCard(period) {
+  // Same buckets logic as renderSummaryByCard but for 'me'
+  const groupedCardIds=new Set(state.cardGroups.flatMap(g=>g.cardIds));
+  const ungroupedCards=state.creditCards.filter(c=>!groupedCardIds.has(c.id));
+  const buckets=[
+    ...state.cardGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
+    ...ungroupedCards.map(c=>({label:c.name,cardIds:[c.id],cat:'tarjeta'})),
+    {label:'Préstamos',cardIds:null,cat:'prestamo'},
+    {label:'Gastos Recurrentes',cardIds:null,cat:'recurrente'},
+    {label:'Cuentas de Servicios',cardIds:null,cat:'servicio'},
+  ];
+  const rows=buckets.map(b=>{
+    const txs=state.transactions.filter(tx=>{
+      if(!getTxAmountForPeriod(tx,period))return false;
+      const s=(tx.splits||[]).find(s=>s.personId==='me');
+      if(!s||s.pct===0)return false;
+      const cat=tx.category||'tarjeta';
+      if(b.cardIds) return cat==='tarjeta'&&b.cardIds.includes(tx.cardId);
+      return cat===b.cat;
+    });
+    if(!txs.length)return'';
+    const subtotal=txs.reduce((a,tx)=>{
+      const s=tx.splits.find(s=>s.personId==='me');
+      return a+getTxAmountForPeriod(tx,period)*(s.pct/100);
+    },0);
+    return`<div class="person-summary-item" style="background:rgba(0,0,0,0.1)">
+      <div style="font-weight:700;font-size:13px;color:var(--text-2)">${b.label}</div>
+      <div class="item-amount" style="font-size:15px;font-weight:800;color:#a78bfa">${fmtCLP(subtotal)}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  return rows||`<div style="padding:14px 20px;font-size:13px;color:var(--text-3)">Sin gastos propios este período</div>`;
 }
 
 function renderSummaryDetail(people,perPerson,period,grid) {
@@ -1081,20 +1150,19 @@ function renderSummaryDetail(people,perPerson,period,grid) {
 }
 
 function renderSummaryByCard(people,perPerson,period,grid) {
-  // Build effective card groups: user-defined groups + ungrouped cards + loans + recurring
-  const groupedCardIds=new Set(state.cardGroups.flatMap(g=>g.cardIds));
-  const ungroupedCards=state.creditCards.filter(c=>!groupedCardIds.has(c.id));
-
-  // Each "bucket": {label, cardIds or null, category override}
-  const buckets=[
-    ...state.cardGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
-    ...ungroupedCards.map(c=>({label:c.name,cardIds:[c.id],cat:'tarjeta'})),
-    {label:'Préstamos',cardIds:null,cat:'prestamo'},
-    {label:'Gastos Recurrentes',cardIds:null,cat:'recurrente'},
-    {label:'Cuentas de Servicios',cardIds:null,cat:'servicio'},
-  ];
-
+  // Build per-person buckets respecting personIds filter on each group
   grid.innerHTML=people.map(p=>{
+    // Groups that apply to this person
+    const personGroups=state.cardGroups.filter(g=>!g.personIds||g.personIds.length===0||g.personIds.includes(p.id));
+    const personGroupedCardIds=new Set(personGroups.flatMap(g=>g.cardIds));
+    const personUngroupedCards=state.creditCards.filter(c=>!personGroupedCardIds.has(c.id));
+    const buckets=[
+      ...personGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
+      ...personUngroupedCards.map(c=>({label:c.name,cardIds:[c.id],cat:'tarjeta'})),
+      {label:'Préstamos',cardIds:null,cat:'prestamo'},
+      {label:'Gastos Recurrentes',cardIds:null,cat:'recurrente'},
+      {label:'Cuentas de Servicios',cardIds:null,cat:'servicio'},
+    ];
     const col=getColor(state.people.indexOf(p));
     const total=perPerson[p.id]||0;
     const bucketRows=buckets.map(b=>{
@@ -1116,7 +1184,6 @@ function renderSummaryByCard(people,perPerson,period,grid) {
         <div class="item-amount" style="font-size:15px;font-weight:800;color:${col.hex}">${fmtCLP(subtotal)}</div>
       </div>`;
     }).filter(Boolean).join('');
-
     return`<div class="person-summary-card">
       <div class="person-summary-header" style="background:${col.bg}">
         <div class="person-summary-info">
@@ -1136,24 +1203,8 @@ function renderSummaryByCard(people,perPerson,period,grid) {
 }
 
 // ══════════════════════════════════════════════════════════
-//  CARD GROUPS (for summary merging)
+//  CARD GROUPS
 // ══════════════════════════════════════════════════════════
-function renderCardGroups() {
-  const list=document.getElementById('card-groups-list');
-  if(!state.cardGroups.length){
-    list.innerHTML=`<div style="padding:10px;font-size:13px;color:var(--text-3)">Sin grupos definidos. Crea un grupo para fusionar tarjetas en el resumen.</div>`;
-    return;
-  }
-  list.innerHTML=state.cardGroups.map(g=>{
-    const names=g.cardIds.map(id=>getCard(id)?.name||'?').join(', ');
-    return`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="flex:1"><div style="font-weight:600;font-size:13px">${g.name}</div>
-        <div style="font-size:12px;color:var(--text-3)">${names}</div>
-      </div>
-      <button class="icon-btn danger" onclick="deleteCardGroup('${g.id}')">🗑️</button>
-    </div>`;
-  }).join('');
-}
 
 function openAddCardGroup() {
   // Populate checkboxes
@@ -1399,20 +1450,39 @@ function renderTagList() {
     <div style="width:10px;height:10px;border-radius:50%;background:${t.color||'#6c63ff'}"></div>
     <span style="font-size:16px">${t.emoji||'🏷️'}</span>
     <span style="flex:1;font-size:13px;font-weight:600">${t.name}</span>
+    <button class="icon-btn" onclick="openEditTag('${t.id}')">✏️</button>
     <button class="icon-btn danger" onclick="deleteTag('${t.id}')">🗑️</button>
   </div>`).join('');
 }
 function openTagModal() {
+  editingTag=null;
+  document.getElementById('tag-modal-title').textContent='Nueva Etiqueta';
+  document.getElementById('tag-save-btn').textContent='Crear etiqueta';
   document.getElementById('tag-name-input').value='';
-  // render emoji picker
   document.getElementById('tag-emoji-picker').innerHTML=TAG_EMOJIS.map((e,i)=>
     `<span class="tag-emoji-opt" onclick="selectTagEmoji('${e}',this)" style="cursor:pointer;font-size:20px;padding:4px;border-radius:6px">${e}</span>`
   ).join('');
-  // render color picker
   document.getElementById('tag-color-picker').innerHTML=TAG_COLORS.map(c=>
     `<div class="color-dot" style="background:${c}" onclick="selectTagColor('${c}',this)"></div>`
   ).join('');
   window._tagEmoji='🏷️'; window._tagColor=TAG_COLORS[0];
+  openModal('tag-modal');
+}
+function openEditTag(id) {
+  editingTag=state.tags.find(t=>t.id===id); if(!editingTag)return;
+  document.getElementById('tag-modal-title').textContent='Editar Etiqueta';
+  document.getElementById('tag-save-btn').textContent='Guardar cambios';
+  document.getElementById('tag-name-input').value=editingTag.name;
+  window._tagEmoji=editingTag.emoji||'🏷️';
+  window._tagColor=editingTag.color||TAG_COLORS[0];
+  // render emoji picker with selection
+  document.getElementById('tag-emoji-picker').innerHTML=TAG_EMOJIS.map(e=>
+    `<span class="tag-emoji-opt" onclick="selectTagEmoji('${e}',this)" style="cursor:pointer;font-size:20px;padding:4px;border-radius:6px;${e===editingTag.emoji?'background:var(--bg-600)':''}">${e}</span>`
+  ).join('');
+  // render color picker with selection
+  document.getElementById('tag-color-picker').innerHTML=TAG_COLORS.map(c=>
+    `<div class="color-dot ${c===editingTag.color?'selected':''}" style="background:${c}" onclick="selectTagColor('${c}',this)"></div>`
+  ).join('');
   openModal('tag-modal');
 }
 function selectTagEmoji(e,el){window._tagEmoji=e;document.querySelectorAll('.tag-emoji-opt').forEach(x=>x.style.background='');el.style.background='var(--bg-600)';}
@@ -1420,9 +1490,16 @@ function selectTagColor(c,el){window._tagColor=c;document.querySelectorAll('#tag
 function saveTag() {
   const name=document.getElementById('tag-name-input').value.trim();
   if (!name){toast('Ingresa un nombre','error');return;}
-  state.tags.push({id:uid(),name,emoji:window._tagEmoji||'🏷️',color:window._tagColor||TAG_COLORS[0]});
-  save(); closeModal('tag-modal'); renderTagList();
-  toast('Etiqueta creada');
+  if(editingTag) {
+    Object.assign(editingTag,{name,emoji:window._tagEmoji||'🏷️',color:window._tagColor||TAG_COLORS[0]});
+    save(); closeModal('tag-modal'); renderTagList(); populateTxTagSelect();
+    toast('Etiqueta actualizada');
+  } else {
+    state.tags.push({id:uid(),name,emoji:window._tagEmoji||'🏷️',color:window._tagColor||TAG_COLORS[0]});
+    save(); closeModal('tag-modal'); renderTagList();
+    toast('Etiqueta creada');
+  }
+  editingTag=null;
 }
 function deleteTag(id) {
   askConfirm('¿Eliminar esta etiqueta?', () => {
@@ -1432,7 +1509,53 @@ function deleteTag(id) {
   });
 }
 
-// ── Modal helpers ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
+//  CARD GROUPS (for summary merging)
+// ══════════════════════════════════════════════════════════
+function renderCardGroups() {
+  const list=document.getElementById('card-groups-list');
+  if(!state.cardGroups.length){
+    list.innerHTML=`<div style="padding:10px;font-size:13px;color:var(--text-3)">Sin grupos definidos. Crea un grupo para fusionar tarjetas en el resumen.</div>`;
+    return;
+  }
+  list.innerHTML=state.cardGroups.map(g=>{
+    const names=g.cardIds.map(id=>getCard(id)?.name||'?').join(', ');
+    const personNames=(g.personIds&&g.personIds.length)? g.personIds.map(id=>getPerson(id)?.name||'?').join(', ') : 'Todos';
+    return`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1"><div style="font-weight:600;font-size:13px">${g.name}</div>
+        <div style="font-size:12px;color:var(--text-3)">Tarjetas: ${names}</div>
+        <div style="font-size:12px;color:var(--text-3)">Personas: ${personNames}</div>
+      </div>
+      <button class="icon-btn danger" onclick="deleteCardGroup('${g.id}')">🗑️</button>
+    </div>`;
+  }).join('');
+}
+
+function openAddCardGroup() {
+  const cb=document.getElementById('group-cards-cb');
+  cb.innerHTML=state.creditCards.map(c=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer">
+      <input type="checkbox" value="${c.id}" style="accent-color:var(--accent)"> ${c.name}
+    </label>`).join('');
+  const pb=document.getElementById('group-people-cb');
+  pb.innerHTML=state.people.length
+    ? state.people.map(p=>`
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer">
+        <input type="checkbox" value="${p.id}" style="accent-color:var(--accent)"> ${p.name}
+      </label>`).join('')
+    : '<div style="font-size:12px;color:var(--text-3)">No hay personas registradas</div>';
+  document.getElementById('group-name').value='';
+  openModal('card-group-modal');
+}
+function saveCardGroup() {
+  const name=document.getElementById('group-name').value.trim();
+  const cardIds=[...document.querySelectorAll('#group-cards-cb input:checked')].map(i=>i.value);
+  const personIds=[...document.querySelectorAll('#group-people-cb input:checked')].map(i=>i.value);
+  if(!name){toast('Ingresa nombre del grupo','error');return;}
+  if(cardIds.length<2){toast('Selecciona al menos 2 tarjetas','error');return;}
+  state.cardGroups.push({id:uid(),name,cardIds,personIds});
+  save(); closeModal('card-group-modal'); renderCardGroups(); toast('Grupo creado');
+}
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.addEventListener('click',e=>{if(e.target.classList.contains('modal-overlay'))e.target.classList.remove('open');});
@@ -1465,11 +1588,12 @@ function renderAnnual() {
   const MONTHS=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   const yr=annualYear;
   const periods=MONTHS.map((_,i)=>`${yr}-${String(i+1).padStart(2,'0')}`);
+  const filterPid=annualPersonFilter; // '' = todos
 
   document.getElementById('annual-year-label').textContent=yr;
+  populatePeriodSelects(); // refresh person filter options
 
   // ── Build rows ─────────────────────────────────────────
-  // Each "bucket": tarjeta|grupo, prestamo, recurrente, income
   const groupedCardIds=new Set((state.cardGroups||[]).flatMap(g=>g.cardIds));
   const ungroupedCards=state.creditCards.filter(c=>!groupedCardIds.has(c.id));
 
@@ -1481,7 +1605,7 @@ function renderAnnual() {
     {key:'servicio',label:'🔌 Servicios',cardIds:null,cat:'servicio'},
   ];
 
-  // Compute matrix: buckets × periods
+  // Amount helper: total or portion for a specific person
   function bucketAmountForPeriod(b, period) {
     return state.transactions.reduce((sum,tx)=>{
       const amt=getTxAmountForPeriod(tx,period);
@@ -1492,6 +1616,10 @@ function renderAnnual() {
       } else {
         if(cat!==b.cat)return sum;
       }
+      if(filterPid) {
+        const s=(tx.splits||[]).find(sp=>sp.personId===filterPid);
+        return sum+(s?amt*(s.pct/100):0);
+      }
       return sum+amt;
     },0);
   }
@@ -1499,12 +1627,19 @@ function renderAnnual() {
   // Filter out empty buckets for this year
   const activeBuckets=buckets.filter(b=>periods.some(p=>bucketAmountForPeriod(b,p)>0));
 
-  // Monthly totals (gastos)
-  const monthlyGastos=periods.map(p=>state.transactions.reduce((s,tx)=>s+getTxAmountForPeriod(tx,p),0));
-  const monthlyIncome=periods.map(p=>calcIncomePeriod(p));
+  // Monthly totals
+  const monthlyGastos=periods.map(p=>state.transactions.reduce((s,tx)=>{
+    const amt=getTxAmountForPeriod(tx,p);
+    if(!amt)return s;
+    if(filterPid){
+      const sp=(tx.splits||[]).find(sp=>sp.personId===filterPid);
+      return s+(sp?amt*(sp.pct/100):0);
+    }
+    return s+amt;
+  },0));
+  const monthlyIncome=periods.map(p=>filterPid?0:calcIncomePeriod(p)); // ingresos solo en vista global
   const monthlyBalance=periods.map((_,i)=>monthlyIncome[i]-monthlyGastos[i]);
 
-  // Column max for color scaling
   const maxGasto=Math.max(1,...monthlyGastos);
 
   // ── Render header ──────────────────────────────────────
