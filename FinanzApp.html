@@ -492,8 +492,9 @@
   // Expose to inline onclick handlers
   function renderSummary(){ if(window._renderSummary) window._renderSummary(); }
 </script>
-<!-- PDF.js library -->
+<!-- PDF librerías -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════
 //  FINANZAS APP v2 — app.js
@@ -1189,6 +1190,7 @@ function renderSummaryDetail(people,perPerson,period,grid) {
         <div style="text-align:right">
           <div class="person-summary-total" style="color:${col.hex}">${fmtCLP(total)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:2px">a cobrar</div>
+          <button class="btn btn-ghost" style="margin-top:6px;padding:4px 8px;font-size:11px;border:1px solid var(--border)" onclick="exportPersonPDF('${p.id}', 'detail')">📄 Exportar PDF</button>
         </div>
       </div>
       <div class="person-summary-items">
@@ -1254,6 +1256,7 @@ function renderSummaryByCard(people,perPerson,period,grid) {
         <div style="text-align:right">
           <div class="person-summary-total" style="color:${col.hex}">${fmtCLP(total)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:2px">a cobrar</div>
+          <button class="btn btn-ghost" style="margin-top:6px;padding:4px 8px;font-size:11px;border:1px solid var(--border)" onclick="exportPersonPDF('${p.id}', 'card')">📄 Exportar PDF</button>
         </div>
       </div>
       <div class="person-summary-items">${bucketRows||`<div style="padding:12px 20px;font-size:12px;color:var(--text-3)">Sin gastos</div>`}</div>
@@ -2124,6 +2127,111 @@ function saveImportedTxs() {
   closeModal('import-modal');
   renderPage('transactions');
   toast(`${toImport.length} gastos importados exitosamente`);
+}
+
+// ══════════════════════════════════════════════════════════
+//  EXPORT TO PDF (Person Summary)
+// ══════════════════════════════════════════════════════════
+function exportPersonPDF(personId, mode) {
+  if (!window.html2pdf) { toast('Librería PDF no cargada, reintenta en unos segundos', 'error'); return; }
+  const p = getPerson(personId);
+  if (!p) return;
+  const period = state.currentPeriod;
+  const {perPerson} = calcPeriod(period);
+  const total = perPerson[p.id] || 0;
+  
+  let rowsHtml = '';
+  
+  if (mode === 'detail') {
+    const lines = state.transactions.filter(tx=>{
+      if(!getTxAmountForPeriod(tx,period))return false;
+      const s=(tx.splits||[]).find(s=>s.personId===p.id);
+      return s&&s.pct>0;
+    }).map(tx=>({tx,portion:getTxAmountForPeriod(tx,period)*(tx.splits.find(s=>s.personId===p.id).pct/100)}));
+    
+    rowsHtml = lines.map(l=>{
+      const card=getCard(l.tx.cardId);
+      const cat=l.tx.category||'tarjeta';
+      const catLabel=cat==='tarjeta'?'Tarjeta':cat==='prestamo'?'Crédito':'Recurrente';
+      return `<tr>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-size:13px">${catLabel} - ${l.tx.description}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-size:13px;color:#666">${getInstallmentLabel(l.tx,period)}${card?' · '+card.name:''}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-size:13px;text-align:right;font-weight:bold">${fmtCLP(l.portion)}</td>
+      </tr>`;
+    }).join('');
+  } else {
+    const personGroups=state.cardGroups.filter(g=>g.isActive!==false && (!g.personIds||g.personIds.length===0||g.personIds.includes(p.id)));
+    const personGroupedCardIds=new Set(personGroups.flatMap(g=>g.cardIds));
+    const personUngroupedCards=state.creditCards.filter(c=>!personGroupedCardIds.has(c.id));
+    const buckets=[
+      ...personGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
+      ...personUngroupedCards.map(c=>({label:c.name,cardIds:[c.id],cat:'tarjeta'})),
+      {label:'Préstamos',cardIds:null,cat:'prestamo'},
+      {label:'Gastos Recurrentes',cardIds:null,cat:'recurrente'},
+      {label:'Cuentas de Servicios',cardIds:null,cat:'servicio'},
+    ];
+    
+    rowsHtml = buckets.map(b=>{
+      const txs=state.transactions.filter(tx=>{
+        if(!getTxAmountForPeriod(tx,period))return false;
+        const s=(tx.splits||[]).find(s=>s.personId===p.id);
+        if(!s||s.pct===0)return false;
+        const cat=tx.category||'tarjeta';
+        if(b.cardIds) return cat==='tarjeta'&&b.cardIds.includes(tx.cardId);
+        return cat===b.cat;
+      });
+      if(!txs.length)return '';
+      const subtotal=txs.reduce((a,tx)=>{
+        const s=tx.splits.find(s=>s.personId===p.id);
+        return a+getTxAmountForPeriod(tx,period)*(s.pct/100);
+      },0);
+      return `<tr>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-size:13px" colspan="2">${b.label}</td>
+        <td style="padding:10px;border-bottom:1px solid #ddd;font-size:13px;text-align:right;font-weight:bold">${fmtCLP(subtotal)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const html = `
+    <div style="font-family:sans-serif;padding:30px;color:#333;background:#fff">
+      <h1 style="color:#111;margin-bottom:5px;font-size:24px">Resumen Mensual de Gastos Compartidos</h1>
+      <div style="font-size:14px;color:#666;margin-bottom:30px">
+        <strong>Enviado para:</strong> ${p.name}<br>
+        <strong>Período:</strong> ${formatPeriod(period)}
+      </div>
+      
+      <table style="width:100%;border-collapse:collapse;margin-bottom:30px">
+        <thead>
+          <tr>
+            <th style="padding:10px;border-bottom:2px solid #111;text-align:left;font-size:14px">Concepto</th>
+            <th style="padding:10px;border-bottom:2px solid #111;text-align:left;font-size:14px">Detalle</th>
+            <th style="padding:10px;border-bottom:2px solid #111;text-align:right;font-size:14px">A Pagar</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || '<tr><td colspan="3" style="padding:20px;text-align:center">Sin gastos registrados</td></tr>'}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2" style="padding:15px 10px;font-weight:bold;text-align:right;font-size:16px;">Total a Cobrar:</td>
+            <td style="padding:15px 10px;font-weight:bold;text-align:right;font-size:18px;color:#ef4444">${fmtCLP(total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div style="font-size:11px;color:#888;text-align:center;margin-top:50px">Generado por FinanzApp el ${new Date().toLocaleDateString('es-CL')}</div>
+    </div>
+  `;
+  
+  const opt = {
+    margin:       10,
+    filename:     `Resumen_${p.name.replace(/\\s+/g, '_')}_${period}.pdf`,
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2 },
+    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  
+  toast('Generando PDF...');
+  html2pdf().set(opt).from(html).save().then(()=>{ toast('PDF descargado exitosamente'); });
 }
 
 // ── Bootstrap ──────────────────────────────────────────────
