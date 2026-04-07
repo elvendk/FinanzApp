@@ -122,6 +122,7 @@
           <div id="tx-bulk-actions" style="display:none;align-items:center;gap:8px">
             <span id="tx-bulk-count" style="font-size:14px;font-weight:600;color:var(--text-1)">0 sel.</span>
             <button class="btn btn-ghost" style="color:#ef4444" onclick="deleteSelectedTxs()">🗑️ Eliminar</button>
+            <button class="btn btn-ghost" onclick="duplicateSelectedTxs()">✨ Duplicar</button>
             <button class="btn btn-primary" onclick="openMergeTxsModal()">🔗 Fusionar</button>
           </div>
           <div id="tx-normal-actions" class="page-actions">
@@ -244,7 +245,7 @@
     </div>
     <div class="form-group"><label class="form-label">Descripción</label><input class="form-input" id="income-desc" type="text" placeholder="Ej: Sueldo, Bono, Arriendo…"/></div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Monto</label><input class="form-input" id="income-amount" type="number" min="0" step="1"/></div>
+      <div class="form-group"><label class="form-label">Monto</label><input class="form-input" id="income-amount" type="number" step="0.01"/></div>
       <div class="form-group"><label class="form-label">Período</label><input class="form-input" id="income-period" type="month"/></div>
     </div>
     <div class="form-group"><label class="form-label">Categoría</label>
@@ -281,11 +282,22 @@
     </div>
 
     <div class="form-row-3">
-      <div class="form-group"><label class="form-label">Monto total</label><input class="form-input" id="tx-amount" type="number" min="0" step="1" placeholder="0"/>
-        <div class="form-hint">Monto total (no la cuota)</div></div>
+      <div class="form-group"><label class="form-label">Monto total</label>
+        <div style="display:flex;gap:6px">
+          <input class="form-input" id="tx-amount" type="number" step="0.01" placeholder="0" style="flex:1"/>
+          <select class="form-select" id="tx-currency" style="width:75px" onchange="onTxCurrencyChange()"><option value="CLP">CLP</option><option value="UF">UF</option></select>
+        </div>
+        <div class="form-hint">Monto total (no cuota)</div>
+      </div>
       <div class="form-group"><label class="form-label">Fecha</label><input class="form-input" id="tx-date" type="date"/></div>
       <div class="form-group"><label class="form-label">Período de inicio</label><input class="form-input" id="tx-period" type="month"/>
-        <div class="form-hint">1ª cuota / inicio recurrente</div></div>
+        <div class="form-hint">1ª cuota / inicio recurrente</div>
+      </div>
+    </div>
+    <div class="form-group" id="tx-uf-group" style="display:none">
+      <label class="form-label">Valor UF Fijo (Opcional)</label>
+      <input class="form-input" id="tx-uf-value" type="number" step="0.01" placeholder="Ej: 38500 (Dejar vacío usar API)"/>
+      <div class="form-hint">Si queda vacío se buscará el del día 9 del mes.</div>
     </div>
 
     <div class="form-row">
@@ -366,7 +378,7 @@
 <!-- ══ MODAL — CARD GROUP ══ -->
 <div class="modal-overlay" id="card-group-modal">
   <div class="modal" style="max-width:480px">
-    <div class="modal-header"><div class="modal-title">Fusionar tarjetas (vista)</div><button class="modal-close" onclick="closeModal('card-group-modal')">✕</button></div>
+    <div class="modal-header"><div class="modal-title" id="card-group-modal-title">Fusionar tarjetas (vista)</div><button class="modal-close" onclick="closeModal('card-group-modal')">✕</button></div>
     <div style="font-size:13px;color:var(--text-3);margin-bottom:16px">Agrupa tarjetas visualmente en el resumen por tarjeta. Puedes restringirlo a personas específicas.</div>
     <div class="form-group"><label class="form-label">Nombre del grupo</label><input class="form-input" id="group-name" type="text" placeholder="Ej: Tarjetas banco, Todas Visa…"/></div>
     <div class="form-group"><label class="form-label">Selecciona tarjetas a fusionar</label>
@@ -496,11 +508,12 @@ let state = {
   incomes: [],          // {id,description,amount,period,category}
   cardGroups: [],       // {id,name,cardIds[]} — for summary merging
   tags: [],             // {id,name,emoji,color} — user-defined labels
+  ufCache: {},          // { 'YYYY-MM': value }
   currentPeriod: getCurrentPeriod(),
 };
 
 let editingTx = null, editingPerson = null, editingCard = null;
-let editingIncome = null, editingTag = null;
+let editingIncome = null, editingTag = null, editingCardGroup = null;
 let summaryMode = 'detail'; // 'card' | 'detail'
 let txFilter = { search:'', card:'', period:'', category:'' };
 let annualYear = new Date().getFullYear();
@@ -511,7 +524,6 @@ let incomeFilterPeriod = '';
 function save() { localStorage.setItem('finanzas_v2', JSON.stringify(state)); }
 function load() {
   const raw = localStorage.getItem('finanzas_v2');
-  // migrate from v1
   const old = localStorage.getItem('finanzas_state');
   if (raw) { try { state = { ...state, ...JSON.parse(raw) }; } catch(e) {} }
   else if (old) { try { const o=JSON.parse(old); state.people=o.people||[]; state.creditCards=o.creditCards||[]; state.transactions=o.transactions||[]; state.currentPeriod=o.currentPeriod||state.currentPeriod; } catch(e) {} }
@@ -519,6 +531,7 @@ function load() {
   if (!state.incomes) state.incomes = [];
   if (!state.cardGroups) state.cardGroups = [];
   if (!state.tags) state.tags = [];
+  if (!state.ufCache) state.ufCache = {};
 }
 
 // ── Helpers ────────────────────────────────────────────────
@@ -547,6 +560,22 @@ const CC_GRADIENTS = [
 ];
 function getColor(idx) { return COLORS[idx%COLORS.length]; }
 
+function getUF(period) {
+  if (state.ufCache[period]) return state.ufCache[period];
+  if (!window._ufFetching) window._ufFetching = {};
+  if (!window._ufFetching[period]) {
+    window._ufFetching[period] = true;
+    const [yr, mo] = period.split('-');
+    fetch(`https://mindicador.cl/api/uf/09-${mo}-${yr}`).then(r=>r.json()).then(d=>{
+      if(d&&d.serie&&d.serie[0]){ state.ufCache[period]=d.serie[0].valor; save(); }
+      const pg=document.querySelector('.page.active'); if(pg) renderPage(pg.id.replace('page-',''));
+    }).catch(()=>{});
+  }
+  const dates = Object.keys(state.ufCache).sort();
+  if (dates.length) return state.ufCache[dates[dates.length-1]];
+  return 38000;
+}
+
 // ── Period helpers ─────────────────────────────────────────
 function getPeriods() {
   const s = new Set([getCurrentPeriod(), state.currentPeriod]);
@@ -570,20 +599,23 @@ function populatePeriodSelects() {
 
 // ── Installment amount for a given period ──────────────────
 function getTxAmountForPeriod(tx, period) {
+  let amt = tx.amount;
+  if(tx.currency === 'UF') amt = amt * (tx.fixedUFValue || getUF(period));
+  
   if (tx.category==='recurrente' || tx.category==='servicio') {
     const [tY,tM]=tx.period.split('-').map(Number);
     const [pY,pM]=period.split('-').map(Number);
     const elapsed=(pY*12+pM)-(tY*12+tM);
     if (elapsed<0) return 0;
     if (tx.months && tx.months>0 && elapsed>=tx.months) return 0;
-    return tx.amount;
+    return amt;
   }
-  if (tx.type==='single') return tx.period===period ? tx.amount : 0;
+  if (tx.type==='single') return tx.period===period ? amt : 0;
   const [tY,tM]=tx.period.split('-').map(Number);
   const [pY,pM]=period.split('-').map(Number);
   const elapsed=(pY-tY)*12+(pM-tM);
   if (elapsed<0||elapsed>=tx.installments) return 0;
-  return tx.amount/tx.installments;
+  return amt/tx.installments;
 }
 
 function getInstallmentLabel(tx, period) {
@@ -639,7 +671,9 @@ function calcCardUsageTotal(cardId) {
         const [cY,cM]=state.currentPeriod.split('-').map(Number);
         const elapsed=(cY-tY)*12+(cM-tM);
         const remaining=Math.max(0,t.installments-elapsed);
-        return a+(t.amount/t.installments)*remaining;
+        let amt = t.amount;
+        if(t.currency === 'UF') amt = amt * (t.fixedUFValue || getUF(state.currentPeriod));
+        return a+(amt/t.installments)*remaining;
       }
       return a+getTxAmountForPeriod(t,state.currentPeriod);
     },0);
@@ -825,7 +859,7 @@ function saveIncome() {
   const category=document.getElementById('income-category').value;
   const period=document.getElementById('income-period').value;
   if (!description){toast('Ingresa descripción','error');return;}
-  if (!amount||amount<=0){toast('Monto inválido','error');return;}
+  if (isNaN(amount) || amount===0){toast('Monto inválido','error');return;}
   if (editingIncome) Object.assign(editingIncome,{description,amount,category,period});
   else state.incomes.push({id:uid(),description,amount,category,period});
   save(); closeModal('income-modal'); populatePeriodSelects(); renderPage('incomes');
@@ -932,6 +966,30 @@ function deleteSelectedTxs() {
     state.transactions = state.transactions.filter(t => !selectedTxs.has(t.id));
     save(); renderPage('transactions'); toast(`${selectedTxs.size} eliminadas`);
   });
+}
+
+function duplicateSelectedTxs() {
+  if (selectedTxs.size === 0) return;
+  const toDuplicate = state.transactions.filter(t => selectedTxs.has(t.id));
+  toDuplicate.forEach(base => {
+    let [y, m] = base.period.split('-').map(Number);
+    m++; if(m>12){m=1;y++;}
+    const nextPeriod = `${y}-${String(m).padStart(2,'0')}`;
+    
+    let d = new Date(base.date);
+    d.setMonth(d.getMonth()+1);
+    const nextDate = d.toISOString().slice(0,10);
+    
+    state.transactions.push({
+      ...base,
+      id: uid(),
+      period: nextPeriod,
+      date: nextDate,
+      splits: JSON.parse(JSON.stringify(base.splits || []))
+    });
+  });
+  selectedTxs.clear(); updateBulkActionsUI(); save(); renderPage('transactions');
+  toast(`${toDuplicate.length} gastos duplicados al mes siguiente`);
 }
 
 function openMergeTxsModal() {
@@ -1076,10 +1134,11 @@ function renderSummary() {
 
 function renderMySummaryByCard(period) {
   // Same buckets logic as renderSummaryByCard but for 'me'
-  const groupedCardIds=new Set(state.cardGroups.flatMap(g=>g.cardIds));
+  const activeGroups=state.cardGroups.filter(g=>g.isActive!==false);
+  const groupedCardIds=new Set(activeGroups.flatMap(g=>g.cardIds));
   const ungroupedCards=state.creditCards.filter(c=>!groupedCardIds.has(c.id));
   const buckets=[
-    ...state.cardGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
+    ...activeGroups.map(g=>({label:g.name,cardIds:g.cardIds,cat:'tarjeta'})),
     ...ungroupedCards.map(c=>({label:c.name,cardIds:[c.id],cat:'tarjeta'})),
     {label:'Préstamos',cardIds:null,cat:'prestamo'},
     {label:'Gastos Recurrentes',cardIds:null,cat:'recurrente'},
@@ -1153,7 +1212,7 @@ function renderSummaryByCard(people,perPerson,period,grid) {
   // Build per-person buckets respecting personIds filter on each group
   grid.innerHTML=people.map(p=>{
     // Groups that apply to this person
-    const personGroups=state.cardGroups.filter(g=>!g.personIds||g.personIds.length===0||g.personIds.includes(p.id));
+    const personGroups=state.cardGroups.filter(g=>g.isActive!==false && (!g.personIds||g.personIds.length===0||g.personIds.includes(p.id)));
     const personGroupedCardIds=new Set(personGroups.flatMap(g=>g.cardIds));
     const personUngroupedCards=state.creditCards.filter(c=>!personGroupedCardIds.has(c.id));
     const buckets=[
@@ -1310,6 +1369,9 @@ function openAddTx(category='tarjeta') {
   document.getElementById('tx-modal-title').textContent=labels[category]||'Nueva Transacción';
   document.getElementById('tx-description').value='';
   document.getElementById('tx-amount').value='';
+  document.getElementById('tx-currency').value='CLP';
+  document.getElementById('tx-uf-value').value='';
+  document.getElementById('tx-uf-group').style.display='none';
   document.getElementById('tx-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('tx-category').value=category;
   document.getElementById('tx-type').value=category==='prestamo'?'installment':'single';
@@ -1327,6 +1389,9 @@ function openEditTx(id) {
   document.getElementById('tx-modal-title').textContent='Editar Registro';
   document.getElementById('tx-description').value=editingTx.description;
   document.getElementById('tx-amount').value=editingTx.amount;
+  document.getElementById('tx-currency').value=editingTx.currency||'CLP';
+  document.getElementById('tx-uf-value').value=editingTx.fixedUFValue||'';
+  onTxCurrencyChange();
   document.getElementById('tx-date').value=editingTx.date;
   document.getElementById('tx-category').value=editingTx.category||'tarjeta';
   document.getElementById('tx-type').value=editingTx.type;
@@ -1362,6 +1427,10 @@ function onTxCategoryChange() {
 function onTxTypeChange() {
   document.getElementById('installments-group').style.display=
     document.getElementById('tx-type').value==='installment'?'block':'none';
+}
+function onTxCurrencyChange() {
+  const curr = document.getElementById('tx-currency').value;
+  document.getElementById('tx-uf-group').style.display = curr === 'UF' ? 'block' : 'none';
 }
 function buildSplitsEditor(existing) {
   const participants=[{id:'me',name:'Yo (Mi parte)'},...state.people.map(p=>({id:p.id,name:p.name}))];
@@ -1412,8 +1481,10 @@ function saveTx() {
   const installments=parseInt(document.getElementById('tx-installments').value)||1;
   const months=parseInt(document.getElementById('tx-months').value)||0;
   const tag=document.getElementById('tx-tag')?.value||'';
+  const currency=document.getElementById('tx-currency').value;
+  const fixedUFValue=parseFloat(document.getElementById('tx-uf-value').value)||null;
   if(!description){toast('Ingresa descripción','error');return;}
-  if(!amount||amount<=0){toast('Monto inválido','error');return;}
+  if(isNaN(amount) || amount===0){toast('Monto inválido','error');return;}
   if(!period){toast('Ingresa período','error');return;}
   const splits=[]; let totalPct=0;
   document.querySelectorAll('.split-input').forEach(inp=>{
@@ -1421,8 +1492,8 @@ function saveTx() {
     if(pct>0){splits.push({personId:inp.dataset.pid,pct});totalPct+=pct;}
   });
   if(Math.abs(totalPct-100)>0.5){toast(`Los % deben sumar 100% (actual: ${totalPct.toFixed(1)}%)`,'error');return;}
-  if(editingTx) Object.assign(editingTx,{description,amount,date,cardId,category,type,period,installments,months,tag,splits});
-  else state.transactions.push({id:uid(),description,amount,date,cardId,category,type,period,installments,months,tag,splits});
+  if(editingTx) Object.assign(editingTx,{description,amount,date,cardId,category,type,period,installments,months,tag,splits,currency,fixedUFValue});
+  else state.transactions.push({id:uid(),description,amount,date,cardId,category,type,period,installments,months,tag,splits,currency,fixedUFValue});
   save(); closeModal('tx-modal'); populatePeriodSelects(); renderPage('transactions');
   toast(editingTx?'Actualizado':'Agregado');
 }
@@ -1521,40 +1592,69 @@ function renderCardGroups() {
   list.innerHTML=state.cardGroups.map(g=>{
     const names=g.cardIds.map(id=>getCard(id)?.name||'?').join(', ');
     const personNames=(g.personIds&&g.personIds.length)? g.personIds.map(id=>getPerson(id)?.name||'?').join(', ') : 'Todos';
-    return`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
-      <div style="flex:1"><div style="font-weight:600;font-size:13px">${g.name}</div>
+    const active = g.isActive !== false;
+    return`<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);opacity:${active?'1':'0.5'}">
+      <div style="flex:1"><div style="font-weight:600;font-size:13px">${g.name} ${!active?'(Inactivo)':''}</div>
         <div style="font-size:12px;color:var(--text-3)">Tarjetas: ${names}</div>
         <div style="font-size:12px;color:var(--text-3)">Personas: ${personNames}</div>
       </div>
+      <button class="icon-btn" onclick="toggleCardGroup('${g.id}')">${active?'👁️':'👁️‍🗨️'}</button>
+      <button class="icon-btn" onclick="openEditCardGroup('${g.id}')">✏️</button>
       <button class="icon-btn danger" onclick="deleteCardGroup('${g.id}')">🗑️</button>
     </div>`;
   }).join('');
 }
 
-function openAddCardGroup() {
-  const cb=document.getElementById('group-cards-cb');
-  cb.innerHTML=state.creditCards.map(c=>`
+function toggleCardGroup(id) {
+  const g=state.cardGroups.find(x=>x.id===id);
+  if(g){g.isActive = g.isActive===false?true:false; save(); renderCardGroups(); if(document.getElementById('page-summary').classList.contains('active')) renderSummary();}
+}
+
+function renderCardGroupCbOptions(selCards, selPersons) {
+  document.getElementById('group-cards-cb').innerHTML=state.creditCards.map(c=>`
     <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer">
-      <input type="checkbox" value="${c.id}" style="accent-color:var(--accent)"> ${c.name}
+      <input type="checkbox" value="${c.id}" style="accent-color:var(--accent)" ${selCards.includes(c.id)?'checked':''}> ${c.name}
     </label>`).join('');
-  const pb=document.getElementById('group-people-cb');
-  pb.innerHTML=state.people.length
+  document.getElementById('group-people-cb').innerHTML=state.people.length
     ? state.people.map(p=>`
       <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;cursor:pointer">
-        <input type="checkbox" value="${p.id}" style="accent-color:var(--accent)"> ${p.name}
+        <input type="checkbox" value="${p.id}" style="accent-color:var(--accent)" ${selPersons.includes(p.id)?'checked':''}> ${p.name}
       </label>`).join('')
     : '<div style="font-size:12px;color:var(--text-3)">No hay personas registradas</div>';
+}
+
+function openAddCardGroup() {
+  editingCardGroup=null;
+  document.getElementById('card-group-modal-title').textContent = 'Crear Grupo';
   document.getElementById('group-name').value='';
+  renderCardGroupCbOptions([],[]);
   openModal('card-group-modal');
 }
+
+function openEditCardGroup(id) {
+  editingCardGroup=state.cardGroups.find(g=>g.id===id); if(!editingCardGroup)return;
+  document.getElementById('card-group-modal-title').textContent = 'Editar Grupo';
+  document.getElementById('group-name').value=editingCardGroup.name;
+  renderCardGroupCbOptions(editingCardGroup.cardIds, editingCardGroup.personIds||[]);
+  openModal('card-group-modal');
+}
+
 function saveCardGroup() {
   const name=document.getElementById('group-name').value.trim();
   const cardIds=[...document.querySelectorAll('#group-cards-cb input:checked')].map(i=>i.value);
   const personIds=[...document.querySelectorAll('#group-people-cb input:checked')].map(i=>i.value);
   if(!name){toast('Ingresa nombre del grupo','error');return;}
   if(cardIds.length<2){toast('Selecciona al menos 2 tarjetas','error');return;}
-  state.cardGroups.push({id:uid(),name,cardIds,personIds});
-  save(); closeModal('card-group-modal'); renderCardGroups(); toast('Grupo creado');
+  
+  if(editingCardGroup) {
+    Object.assign(editingCardGroup, {name, cardIds, personIds});
+    toast('Grupo editado');
+  } else {
+    state.cardGroups.push({id:uid(),name,cardIds,personIds,isActive:true});
+    toast('Grupo creado');
+  }
+  save(); closeModal('card-group-modal'); renderCardGroups(); 
+  if(document.getElementById('page-summary').classList.contains('active')) renderSummary();
 }
 function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
