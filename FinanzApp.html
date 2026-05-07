@@ -107,7 +107,7 @@
       <div style="padding:0 32px 32px">
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Descripción</th><th>Categoría</th><th>Monto</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Descripción</th><th>Categoría</th><th>Monto</th><th>Asignado a</th><th>Acciones</th></tr></thead>
             <tbody id="income-tbody"></tbody>
           </table>
         </div>
@@ -161,6 +161,7 @@
       <div class="page-header">
         <h1 class="page-title"><span>Resumen mensual</span></h1>
         <div class="page-actions">
+          <select class="form-select" id="sum-person-filter" onchange="summaryPersonFilter=this.value;renderSummary()" style="min-width:160px"><option value="all">👥 Todos</option><option value="me">👤 Yo</option></select>
           <button id="sum-btn-detail" class="btn btn-primary btn-sm" onclick="summaryMode='detail';renderSummary()">📋 Detalle</button>
           <button id="sum-btn-card" class="btn btn-ghost btn-sm" onclick="summaryMode='card';renderSummary()">💳 Por tarjeta</button>
           <button class="btn btn-ghost btn-sm" onclick="openAddCardGroup()">⚙️ Fusionar tarjetas</button>
@@ -171,7 +172,9 @@
         <div class="my-summary-card" style="margin-bottom:20px">
           <div class="my-summary-title">🧾 Mi parte este período</div>
           <div class="my-summary-total" id="my-summary-total">$0</div>
-          <div class="my-summary-sub">Lo que debo pagar yo</div>
+          <div class="my-summary-sub">Total de mis gastos</div>
+          <div id="my-income-assigned" style="display:none;margin-top:8px"><span style="color:#10b981;font-size:13px;font-weight:600">💰 Ingresos asignados a mí: <span id="my-income-assigned-val"></span></span></div>
+          <div id="my-net-balance" style="display:none;margin-top:4px"><span style="color:var(--accent);font-size:15px;font-weight:800">⚖️ Saldo neto: <span id="my-net-balance-val"></span></span></div>
           <div id="my-summary-items" style="margin-top:14px"></div>
         </div>
         <!-- Card groups management (collapsed) -->
@@ -252,6 +255,12 @@
       <select class="form-select" id="income-category">
         <option>Sueldo</option><option>Bono</option><option>Freelance</option>
         <option>Arriendo</option><option>Inversión</option><option>Otro</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Asignar a <span style="font-weight:400;color:var(--text-3)">(reduce saldo de esa persona)</span></label>
+      <select class="form-select" id="income-assignedTo">
+        <option value="">Sin asignar</option>
+        <option value="me">👤 Yo</option>
       </select>
     </div>
     <div class="modal-footer">
@@ -516,6 +525,7 @@ let state = {
 let editingTx = null, editingPerson = null, editingCard = null;
 let editingIncome = null, editingTag = null, editingCardGroup = null;
 let summaryMode = 'detail'; // 'card' | 'detail'
+let summaryPersonFilter = 'all'; // 'all' | 'me' | personId
 let txFilter = { search:'', card:'', period:'', category:'' };
 let annualYear = new Date().getFullYear();
 let annualPersonFilter = '';
@@ -656,6 +666,17 @@ function calcIncomePeriod(period) {
   return state.incomes.filter(i=>i.period===period).reduce((a,i)=>a+i.amount,0);
 }
 
+function calcAssignedIncomes(period) {
+  let myAssigned=0;
+  const perPersonAssigned={};
+  state.people.forEach(p=>{perPersonAssigned[p.id]=0;});
+  state.incomes.filter(i=>i.period===period).forEach(i=>{
+    if(i.assignedTo==='me') myAssigned+=i.amount;
+    else if(i.assignedTo && perPersonAssigned[i.assignedTo]!==undefined) perPersonAssigned[i.assignedTo]+=i.amount;
+  });
+  return {myAssigned,perPersonAssigned};
+}
+
 function calcCardUsage(cardId, period) {
   return state.transactions
     .filter(t=>t.cardId===cardId && (t.category==='tarjeta'||!t.category))
@@ -727,12 +748,14 @@ function renderDashboard() {
   if(hdr) hdr.textContent=formatPeriod(period);
 
   const {myTotal,perPerson}=calcPeriod(period);
+  const {myAssigned}=calcAssignedIncomes(period);
+  const myNet=myTotal-myAssigned;
   const totalOthers=Object.values(perPerson).reduce((a,b)=>a+b,0);
   const grandTotal=myTotal+totalOthers;
   const totalIncome=calcIncomePeriod(period);
-  const balance=totalIncome-myTotal;
+  const balance=totalIncome-myNet;
 
-  document.getElementById('dash-my-total').textContent=fmtCLP(myTotal);
+  document.getElementById('dash-my-total').textContent=fmtCLP(myNet);
   document.getElementById('dash-others-total').textContent=fmtCLP(totalOthers);
   document.getElementById('dash-grand-total').textContent=fmtCLP(grandTotal);
   document.getElementById('dash-income-total').textContent=fmtCLP(totalIncome);
@@ -741,7 +764,7 @@ function renderDashboard() {
   balEl.className='stat-value '+(balance>=0?'green':'red');
 
   document.getElementById('dash-tx-count').textContent=
-    state.transactions.filter(t=>getTxAmountForPeriod(t,period)>0).length;
+    state.transactions.filter(t=>getTxAmountForPeriod(t,period)!==0).length;
 
   // Cards usage — muestra total acumulado (mes actual + cuotas futuras)
   const cardsEl=document.getElementById('dash-cards-usage');
@@ -823,18 +846,29 @@ function renderIncomes() {
   const total=list.reduce((a,i)=>a+i.amount,0);
   document.getElementById('income-total').textContent=fmtCLP(total);
   const tb=document.getElementById('income-tbody');
-  if (!list.length){tb.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">💰</div><p>Sin ingresos para este período</p></div></td></tr>`;return;}
-  tb.innerHTML=list.map(i=>`<tr>
+  if (!list.length){tb.innerHTML=`<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">💰</div><p>Sin ingresos para este período</p></div></td></tr>`;return;}
+  tb.innerHTML=list.map(i=>{
+    let assignedLabel='<span style="color:var(--text-3);font-size:12px">—</span>';
+    if(i.assignedTo==='me') assignedLabel='<span class="badge badge-purple" style="font-size:11px">👤 Yo</span>';
+    else if(i.assignedTo){const p=getPerson(i.assignedTo);if(p){const col=getColor(state.people.indexOf(p));assignedLabel=`<span class="person-chip" style="background:${col.bg};color:${col.hex};font-size:11px">${p.name}</span>`;}}
+    return`<tr>
     <td><div style="font-weight:600">${i.description}</div><div style="font-size:12px;color:var(--text-3)">${formatPeriod(i.period)}</div></td>
     <td><span class="badge badge-gray">${i.category||'General'}</span></td>
     <td style="font-weight:700;color:var(--green)">${fmtCLP(i.amount)}</td>
+    <td>${assignedLabel}</td>
     <td><div style="display:flex;gap:6px">
       <button class="icon-btn" onclick="openEditIncome('${i.id}')">✏️</button>
       <button class="icon-btn danger" onclick="deleteIncome('${i.id}')">🗑️</button>
     </div></td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
+function populateAssignedToSelect(selected) {
+  const el=document.getElementById('income-assignedTo'); if(!el) return;
+  el.innerHTML=`<option value="">Sin asignar</option><option value="me" ${selected==='me'?'selected':''}>👤 Yo</option>`
+    +state.people.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${p.name}</option>`).join('');
+}
 function openAddIncome() {
   editingIncome=null;
   document.getElementById('income-modal-title').textContent='Nuevo Ingreso';
@@ -842,6 +876,7 @@ function openAddIncome() {
   document.getElementById('income-amount').value='';
   document.getElementById('income-category').value='Sueldo';
   document.getElementById('income-period').value=state.currentPeriod;
+  populateAssignedToSelect('');
   openModal('income-modal');
 }
 function openEditIncome(id) {
@@ -852,6 +887,7 @@ function openEditIncome(id) {
   document.getElementById('income-amount').value=editingIncome.amount;
   document.getElementById('income-category').value=editingIncome.category||'Sueldo';
   document.getElementById('income-period').value=editingIncome.period;
+  populateAssignedToSelect(editingIncome.assignedTo||'');
   openModal('income-modal');
 }
 function saveIncome() {
@@ -859,10 +895,11 @@ function saveIncome() {
   const amount=parseFloat(document.getElementById('income-amount').value);
   const category=document.getElementById('income-category').value;
   const period=document.getElementById('income-period').value;
+  const assignedTo=document.getElementById('income-assignedTo')?.value||'';
   if (!description){toast('Ingresa descripción','error');return;}
   if (isNaN(amount) || amount===0){toast('Monto inválido','error');return;}
-  if (editingIncome) Object.assign(editingIncome,{description,amount,category,period});
-  else state.incomes.push({id:uid(),description,amount,category,period});
+  if (editingIncome) Object.assign(editingIncome,{description,amount,category,period,assignedTo});
+  else state.incomes.push({id:uid(),description,amount,category,period,assignedTo});
   save(); closeModal('income-modal'); populatePeriodSelects(); renderPage('incomes');
   toast(editingIncome?'Ingreso actualizado':'Ingreso agregado');
 }
@@ -880,7 +917,7 @@ let selectedTxs = new Set();
 
 function renderTransactions() {
   const period=txFilter.period||state.currentPeriod;
-  let txs=state.transactions.filter(t=>getTxAmountForPeriod(t,period)>0||t.period===period);
+  let txs=state.transactions.filter(t=>getTxAmountForPeriod(t,period)!==0||t.period===period);
   const cardSel=document.getElementById('filter-card');
   const curCard=cardSel?cardSel.value:'';
   if(cardSel){
@@ -1098,8 +1135,26 @@ function renderCards() {
 function renderSummary() {
   const period=state.currentPeriod;
   const {myTotal,perPerson}=calcPeriod(period);
+  const {myAssigned,perPersonAssigned}=calcAssignedIncomes(period);
+  const myNet=myTotal-myAssigned;
+
+  const pfSel=document.getElementById('sum-person-filter');
+  if(pfSel){
+    const cur=summaryPersonFilter;
+    pfSel.innerHTML='<option value="all" '+(cur==='all'?'selected':'')+'>\ud83d\udc65 Todos</option><option value="me" '+(cur==='me'?'selected':'')+'>\ud83d\udc64 Yo</option>'
+      +state.people.map(p=>'<option value="'+p.id+'" '+(p.id===cur?'selected':'')+'>'+p.name+'</option>').join('');
+  }
 
   document.getElementById('my-summary-total').textContent=fmtCLP(myTotal);
+  const iaEl=document.getElementById('my-income-assigned');
+  const nbEl=document.getElementById('my-net-balance');
+  if(myAssigned>0){
+    if(iaEl){iaEl.style.display='block';document.getElementById('my-income-assigned-val').textContent=fmtCLP(myAssigned);}
+    if(nbEl){nbEl.style.display='block';document.getElementById('my-net-balance-val').textContent=fmtCLP(myNet);}
+  } else {
+    if(iaEl)iaEl.style.display='none';
+    if(nbEl)nbEl.style.display='none';
+  }
 
   // Mode toggle buttons
   document.getElementById('sum-btn-detail').className='btn '+(summaryMode==='detail'?'btn-primary':'btn-ghost')+' btn-sm';
@@ -1126,11 +1181,17 @@ function renderSummary() {
   }
 
   const grid=document.getElementById('summary-people-grid');
-  const activePeople=state.people.filter(p=>(perPerson[p.id]||0)>0).sort((a,b)=>(perPerson[b.id]||0)-(perPerson[a.id]||0));
-  if(!activePeople.length){grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🎉</div><p>Sin gastos compartidos este período</p></div>`;return;}
+  const allActive=state.people.filter(p=>(perPerson[p.id]||0)>0).sort((a,b)=>(perPerson[b.id]||0)-(perPerson[a.id]||0));
 
-  if(summaryMode==='detail') renderSummaryDetail(activePeople,perPerson,period,grid);
-  else renderSummaryByCard(activePeople,perPerson,period,grid);
+  if(summaryPersonFilter==='me'){
+    grid.innerHTML='<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">\ud83d\udc64</div><p>Mostrando solo <strong>Mi parte</strong>. Cambia el filtro para ver otras personas.</p></div>';
+    return;
+  }
+  const activePeople=summaryPersonFilter!=='all'?allActive.filter(p=>p.id===summaryPersonFilter):allActive;
+  if(!activePeople.length){grid.innerHTML='<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">\ud83c\udf89</div><p>Sin gastos compartidos este per\xedodo</p></div>';return;}
+
+  if(summaryMode==='detail') renderSummaryDetail(activePeople,perPerson,period,grid,perPersonAssigned);
+  else renderSummaryByCard(activePeople,perPerson,period,grid,perPersonAssigned);
 }
 
 function renderMySummaryByCard(period) {
@@ -1167,7 +1228,8 @@ function renderMySummaryByCard(period) {
   return rows||`<div style="padding:14px 20px;font-size:13px;color:var(--text-3)">Sin gastos propios este período</div>`;
 }
 
-function renderSummaryDetail(people,perPerson,period,grid) {
+function renderSummaryDetail(people,perPerson,period,grid,perPersonAssigned) {
+  perPersonAssigned=perPersonAssigned||{};
   grid.innerHTML=people.map(p=>{
     const col=getColor(state.people.indexOf(p));
     const total=perPerson[p.id]||0;
@@ -1190,6 +1252,7 @@ function renderSummaryDetail(people,perPerson,period,grid) {
         <div style="text-align:right">
           <div class="person-summary-total" style="color:${col.hex}">${fmtCLP(total)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:2px">a cobrar</div>
+          ${(perPersonAssigned[p.id]||0)>0?'<div style="font-size:12px;color:#10b981;margin-top:4px">💰 -'+fmtCLP(perPersonAssigned[p.id]||0)+'</div><div style="font-size:14px;font-weight:800;color:var(--accent);margin-top:2px">Neto: '+fmtCLP(total-(perPersonAssigned[p.id]||0))+'</div>':''}
           <button class="btn btn-ghost" style="margin-top:6px;padding:4px 8px;font-size:11px;border:1px solid var(--border)" onclick="exportPersonPDF('${p.id}', 'detail')">📄 Exportar PDF</button>
         </div>
       </div>
@@ -1210,7 +1273,8 @@ function renderSummaryDetail(people,perPerson,period,grid) {
   }).join('');
 }
 
-function renderSummaryByCard(people,perPerson,period,grid) {
+function renderSummaryByCard(people,perPerson,period,grid,perPersonAssigned) {
+  perPersonAssigned=perPersonAssigned||{};
   // Build per-person buckets respecting personIds filter on each group
   grid.innerHTML=people.map(p=>{
     // Groups that apply to this person
@@ -1256,6 +1320,7 @@ function renderSummaryByCard(people,perPerson,period,grid) {
         <div style="text-align:right">
           <div class="person-summary-total" style="color:${col.hex}">${fmtCLP(total)}</div>
           <div style="font-size:11px;color:var(--text-3);margin-top:2px">a cobrar</div>
+          ${(perPersonAssigned[p.id]||0)>0?'<div style="font-size:12px;color:#10b981;margin-top:4px">💰 -'+fmtCLP(perPersonAssigned[p.id]||0)+'</div><div style="font-size:14px;font-weight:800;color:var(--accent);margin-top:2px">Neto: '+fmtCLP(total-(perPersonAssigned[p.id]||0))+'</div>':''}
           <button class="btn btn-ghost" style="margin-top:6px;padding:4px 8px;font-size:11px;border:1px solid var(--border)" onclick="exportPersonPDF('${p.id}', 'card')">📄 Exportar PDF</button>
         </div>
       </div>
@@ -1697,11 +1762,12 @@ function renderAnnual() {
   populatePeriodSelects(); // refresh person filter options
 
   // ── Build rows ─────────────────────────────────────────
-  const groupedCardIds=new Set((state.cardGroups||[]).flatMap(g=>g.cardIds));
+  const activeAnnualGroups=(state.cardGroups||[]).filter(g=>g.isActive!==false);
+  const groupedCardIds=new Set(activeAnnualGroups.flatMap(g=>g.cardIds));
   const ungroupedCards=state.creditCards.filter(c=>!groupedCardIds.has(c.id));
 
   const buckets=[
-    ...(state.cardGroups||[]).map(g=>({key:'cg_'+g.id,label:'💳 '+g.name,cardIds:g.cardIds,cat:'tarjeta'})),
+    ...activeAnnualGroups.map(g=>({key:'cg_'+g.id,label:'💳 '+g.name,cardIds:g.cardIds,cat:'tarjeta'})),
     ...ungroupedCards.map(c=>({key:'c_'+c.id,label:'💳 '+c.name,cardIds:[c.id],cat:'tarjeta'})),
     {key:'prestamo',label:'🏦 Préstamos',cardIds:null,cat:'prestamo'},
     {key:'recurrente',label:'🔄 Recurrentes',cardIds:null,cat:'recurrente'},
