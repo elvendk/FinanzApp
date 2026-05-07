@@ -604,7 +604,8 @@ function populatePeriodSelects() {
   // Populate annual person filter
   const apf=document.getElementById('annual-person-filter'); if(apf){
     const cur=apf.value||'';
-    apf.innerHTML=`<option value="">Todos (total)</option>`+state.people.map(p=>`<option value="${p.id}" ${p.id===cur?'selected':''}>${p.name}</option>`).join('');
+    apf.innerHTML='<option value="" '+(cur===''?'selected':'')+'>Todos (total)</option><option value="me" '+(cur==='me'?'selected':'')+'>\ud83d\udc64 Yo</option>'
+      +state.people.map(p=>'<option value="'+p.id+'" '+(p.id===cur?'selected':'')+'>'+p.name+'</option>').join('');
   }
 }
 
@@ -1794,7 +1795,7 @@ function renderAnnual() {
   }
 
   // Filter out empty buckets for this year
-  const activeBuckets=buckets.filter(b=>periods.some(p=>bucketAmountForPeriod(b,p)>0));
+  const activeBuckets=buckets.filter(b=>periods.some(p=>bucketAmountForPeriod(b,p)!==0));
 
   // Monthly totals
   const monthlyGastos=periods.map(p=>state.transactions.reduce((s,tx)=>{
@@ -1806,7 +1807,11 @@ function renderAnnual() {
     }
     return s+amt;
   },0));
-  const monthlyIncome=periods.map(p=>filterPid?0:calcIncomePeriod(p)); // ingresos solo en vista global
+  const monthlyIncome=periods.map(p=>{
+    if(!filterPid) return calcIncomePeriod(p);
+    // For Yo: show income assigned to me; for others: show income assigned to that person
+    return state.incomes.filter(i=>i.period===p&&i.assignedTo===filterPid).reduce((a,i)=>a+i.amount,0);
+  });
   const monthlyBalance=periods.map((_,i)=>monthlyIncome[i]-monthlyGastos[i]);
 
   const maxGasto=Math.max(1,...monthlyGastos);
