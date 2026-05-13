@@ -1156,7 +1156,7 @@ async function exportData() {
         try {
           await navigator.share({
             files: [file],
-            title: 'Respaldo FinanzApp',
+            title: 'Respaldo KePago!',
             text: 'Copia de seguridad de tus datos.'
           });
           toast('Guardado / Compartido exitosamente');
@@ -1197,7 +1197,7 @@ function importData(event) {
         throw new Error('Formato inválido');
       }
     } catch (err) {
-      alert('Error importando datos. Asegúrate de que el archivo es un backup válido de FinanzApp.');
+      alert('Error importando datos. Asegúrate de que el archivo es un backup válido de KePago!');
       console.error(err);
     }
     event.target.value = ''; // reset input

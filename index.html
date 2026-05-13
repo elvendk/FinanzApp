@@ -4,7 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <meta name="description" content="Gestiona finanzas personales: tarjetas, préstamos, gastos recurrentes e ingresos."/>
-  <title>FinanzApp — Control de Finanzas</title>
+  <title>KePago! — Control de Finanzas</title>
   <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
@@ -14,7 +14,7 @@
   <aside class="sidebar">
     <div class="sidebar-logo">
       <div class="logo-icon">💳</div>
-      <span>FinanzApp</span>
+      <span>KePago!</span>
     </div>
     <nav class="sidebar-nav">
       <button class="nav-item active" data-page="dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
@@ -1943,7 +1943,7 @@ async function exportData() {
         try {
           await navigator.share({
             files: [file],
-            title: 'Respaldo FinanzApp',
+            title: 'Respaldo KePago!',
             text: 'Copia de seguridad de tus datos.'
           });
           toast('Guardado / Compartido exitosamente');
@@ -1984,7 +1984,7 @@ function importData(event) {
         throw new Error('Formato inválido');
       }
     } catch (err) {
-      alert('Error importando datos. Asegúrate de que el archivo es un backup válido de FinanzApp.');
+      alert('Error importando datos. Asegúrate de que el archivo es un backup válido de KePago!.');
       console.error(err);
     }
     event.target.value = ''; // reset input
@@ -2289,7 +2289,7 @@ function exportPersonPDF(personId, mode) {
           </tr>
         </tfoot>
       </table>
-      <div style="font-size:11px;color:#888;text-align:center;margin-top:50px">Generado por FinanzApp el ${new Date().toLocaleDateString('es-CL')}</div>
+      <div style="font-size:11px;color:#888;text-align:center;margin-top:50px">Generado por KePago! el ${new Date().toLocaleDateString('es-CL')}</div>
     </div>
   `;
   
