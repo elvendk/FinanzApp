@@ -13,7 +13,7 @@ Una aplicación web **100% estática y Serverless** para gestionar tus gastos, c
 ## 📱 Cómo probarlo
 Dado que no necesita servidor:
 1. Simplemente descarga o clona este repositorio.
-2. Abre el archivo `KePago!.html` (o `index.html`) en tu navegador web.
+2. Abre el archivo `KePago.html` (o `index.html`) en tu navegador web.
 3. ¡Comienza a añadir transacciones o a importar el estado de tu tarjeta!
 
 > **Nota para PWA:** También puedes alojarlo fácilmente en plataformas gratuitas como GitHub Pages, Netlify o Vercel para entrar a la app desde cualquier lugar.
